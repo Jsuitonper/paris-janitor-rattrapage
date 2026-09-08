@@ -1,0 +1,4741 @@
+openapi: 3.0.3
+info:
+  title: Paris Janitor — API
+  version: 1.0.0
+  description: >-
+    API de la plateforme de conciergerie Paris Janitor. Périmètre : espace voyageur et back-office
+    d’administration.
+
+
+    **Authentification.** Toutes les routes protégées attendent un en-tête `Authorization: Bearer
+    <jeton>`,
+
+    obtenu par `POST /api/auth/login` ou `POST /api/auth/register`. Les routes marquées d’un cadenas
+    dans cette
+
+    page l’exigent ; les autres sont ouvertes. Les routes `/api/admin/*` exigent en plus le rôle
+    administrateur.
+
+
+    **Erreurs.** Toute erreur suit le même format : `{ "error": { "code", "message" } }`, avec un
+    champ `details`
+
+    supplémentaire sur les erreurs de validation. Les codes sont stables et documentés route par
+    route.
+
+
+    **Montants.** Tous les montants sont des entiers en centimes, jamais des flottants. Les taux
+    sont exprimés
+
+    en points de base : 2000 vaut 20 %.
+
+
+    **Instantané tarifaire.** Le prix d’une réservation est figé à sa création. Modifier ensuite un
+    barème, un
+
+    tarif ou un taux de commission ne change aucune réservation ni facture déjà émise.
+
+
+    **Webhooks.** L’état d’abonnement et le statut de paiement ne sont écrits que par les webhooks
+    Stripe.
+
+    Aucune route applicative ne passe un utilisateur en VIP ni une réservation en payée.
+  license:
+    name: Projet scolaire ESGI 3AL
+servers:
+  - url: /api
+    description: Même origine que cette page
+  - url: http://localhost:3000/api
+    description: Développement local
+tags:
+  - name: Santé
+    description: Disponibilité du service.
+  - name: Authentification
+    description: Inscription et ouverture de session. Jeton JWT valable 7 jours.
+  - name: Compte
+    description: Profil de l’utilisateur connecté.
+  - name: Catalogue public
+    description: Biens publiés, prestations actives et formules VIP. Sans authentification.
+  - name: Devis
+    description: Estimation partageant le code de calcul des réservations.
+  - name: Réservations
+    description: Séjours et prestations du voyageur, avec instantané tarifaire figé.
+  - name: Paiements
+    description: Paiement à l’acte par Stripe PaymentIntent.
+  - name: Abonnement
+    description: Formules VIP par Stripe Subscriptions.
+  - name: Factures
+    description: Factures archivées en PDF, jamais régénérées.
+  - name: Fichiers
+    description: Documents stockés en GridFS.
+  - name: Avis
+    description: Évaluation des prestations réalisées, soumise à modération.
+  - name: Messagerie
+    description: Fils de discussion rattachés aux prestations.
+  - name: Fiches d’intervention
+    description: Compte rendu de prestation, pré-rempli puis complété.
+  - name: Simulateur
+    description: Estimation publique de gains et collecte de demandes.
+  - name: Webhooks Stripe
+    description: Réception des événements Stripe.
+  - name: Administration
+    description: Back-office. Exige le rôle administrateur sur toutes les routes.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Jeton renvoyé par /auth/login ou /auth/register, valable 7 jours. Pas de jeton de
+        rafraîchissement.
+  schemas:
+    Register:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          pattern: ^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        phone:
+          type: string
+          minLength: 6
+          maxLength: 20
+      required:
+        - email
+        - password
+        - firstName
+        - lastName
+    Login:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          pattern: ^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$
+        password:
+          type: string
+          minLength: 1
+      required:
+        - email
+        - password
+    PricingRule:
+      type: object
+      properties:
+        unit:
+          type: string
+          enum:
+            - fixed
+            - km
+            - hour
+            - m2
+            - item
+        baseCents:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        tiers:
+          minItems: 1
+          type: array
+          items:
+            type: object
+            properties:
+              upToQty:
+                nullable: true
+                type: number
+                minimum: 0
+                exclusiveMinimum: true
+              unitPriceCents:
+                type: integer
+                minimum: 0
+                maximum: 9007199254740991
+            required:
+              - upToQty
+              - unitPriceCents
+        minCents:
+          type: integer
+          minimum: 100
+          maximum: 9007199254740991
+      required:
+        - unit
+        - baseCents
+        - tiers
+        - minCents
+    CommissionTiers:
+      minItems: 1
+      type: array
+      items:
+        type: object
+        properties:
+          upToCents:
+            nullable: true
+            type: integer
+            minimum: 0
+            exclusiveMinimum: true
+            maximum: 9007199254740991
+          rateBps:
+            type: integer
+            minimum: 0
+            maximum: 10000
+        required:
+          - upToCents
+          - rateBps
+    VipPlanPatch:
+      type: object
+      properties:
+        monthlyPriceCents:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        yearlyPriceCents:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        discountBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        freeQuota:
+          nullable: true
+          type: object
+          properties:
+            windowMonths:
+              type: integer
+              minimum: 1
+              maximum: 60
+            maxAmountTtcCents:
+              nullable: true
+              type: integer
+              minimum: 0
+              exclusiveMinimum: true
+              maximum: 9007199254740991
+          required:
+            - windowMonths
+            - maxAmountTtcCents
+        showAds:
+          type: boolean
+        priorityAccess:
+          type: boolean
+        renewalBonusBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+    SimulatorOption:
+      type: object
+      properties:
+        key:
+          type: string
+          pattern: ^[a-z0-9_-]+$
+        label:
+          type: string
+          minLength: 1
+          maxLength: 120
+        priceHtCents:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        frequency:
+          type: string
+          enum:
+            - per_stay
+            - per_year
+      required:
+        - key
+        - label
+        - priceHtCents
+        - frequency
+    PlatformSettingsPatch:
+      type: object
+      properties:
+        stayCommissionBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        ownerYearlyFeeCents:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        simulatorOptions:
+          maxItems: 20
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+                pattern: ^[a-z0-9_-]+$
+              label:
+                type: string
+                minLength: 1
+                maxLength: 120
+              priceHtCents:
+                type: integer
+                minimum: 0
+                maximum: 9007199254740991
+              frequency:
+                type: string
+                enum:
+                  - per_stay
+                  - per_year
+            required:
+              - key
+              - label
+              - priceHtCents
+              - frequency
+    PricePreview:
+      type: object
+      properties:
+        pricingRule:
+          type: object
+          properties:
+            unit:
+              type: string
+              enum:
+                - fixed
+                - km
+                - hour
+                - m2
+                - item
+            baseCents:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            tiers:
+              minItems: 1
+              type: array
+              items:
+                type: object
+                properties:
+                  upToQty:
+                    nullable: true
+                    type: number
+                    minimum: 0
+                    exclusiveMinimum: true
+                  unitPriceCents:
+                    type: integer
+                    minimum: 0
+                    maximum: 9007199254740991
+                required:
+                  - upToQty
+                  - unitPriceCents
+            minCents:
+              type: integer
+              minimum: 100
+              maximum: 9007199254740991
+          required:
+            - unit
+            - baseCents
+            - tiers
+            - minCents
+        qty:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+      required:
+        - pricingRule
+        - qty
+    Provider:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        job:
+          type: string
+          minLength: 1
+          maxLength: 80
+        email:
+          type: string
+          format: email
+          pattern: ^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$
+        phone:
+          nullable: true
+          type: string
+          minLength: 6
+          maxLength: 20
+        status:
+          type: string
+          enum:
+            - candidate
+            - validated
+            - suspended
+      required:
+        - name
+        - job
+        - email
+    ProviderPatch:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        job:
+          type: string
+          minLength: 1
+          maxLength: 80
+        email:
+          type: string
+          format: email
+          pattern: ^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$
+        phone:
+          nullable: true
+          type: string
+          minLength: 6
+          maxLength: 20
+        status:
+          type: string
+          enum:
+            - candidate
+            - validated
+            - suspended
+    ServiceCategory:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        slug:
+          type: string
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+        description:
+          type: string
+          maxLength: 500
+      required:
+        - name
+        - slug
+    ServiceCategoryPatch:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        slug:
+          type: string
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+        description:
+          type: string
+          maxLength: 500
+    ServiceOffering:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 140
+        description:
+          type: string
+          maxLength: 2000
+        categoryId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+        providerId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+        pricingRule:
+          type: object
+          properties:
+            unit:
+              type: string
+              enum:
+                - fixed
+                - km
+                - hour
+                - m2
+                - item
+            baseCents:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            tiers:
+              minItems: 1
+              type: array
+              items:
+                type: object
+                properties:
+                  upToQty:
+                    nullable: true
+                    type: number
+                    minimum: 0
+                    exclusiveMinimum: true
+                  unitPriceCents:
+                    type: integer
+                    minimum: 0
+                    maximum: 9007199254740991
+                required:
+                  - upToQty
+                  - unitPriceCents
+            minCents:
+              type: integer
+              minimum: 100
+              maximum: 9007199254740991
+          required:
+            - unit
+            - baseCents
+            - tiers
+            - minCents
+        vatRateBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        vipOnly:
+          type: boolean
+        priorityAccess:
+          type: boolean
+        active:
+          type: boolean
+      required:
+        - name
+        - categoryId
+        - providerId
+        - pricingRule
+    ServiceOfferingPatch:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 140
+        description:
+          type: string
+          maxLength: 2000
+        categoryId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+        providerId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+        pricingRule:
+          type: object
+          properties:
+            unit:
+              type: string
+              enum:
+                - fixed
+                - km
+                - hour
+                - m2
+                - item
+            baseCents:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            tiers:
+              minItems: 1
+              type: array
+              items:
+                type: object
+                properties:
+                  upToQty:
+                    nullable: true
+                    type: number
+                    minimum: 0
+                    exclusiveMinimum: true
+                  unitPriceCents:
+                    type: integer
+                    minimum: 0
+                    maximum: 9007199254740991
+                required:
+                  - upToQty
+                  - unitPriceCents
+            minCents:
+              type: integer
+              minimum: 100
+              maximum: 9007199254740991
+          required:
+            - unit
+            - baseCents
+            - tiers
+            - minCents
+        vatRateBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        vipOnly:
+          type: boolean
+        priorityAccess:
+          type: boolean
+        active:
+          type: boolean
+    Property:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 140
+        description:
+          type: string
+          maxLength: 4000
+        address:
+          type: object
+          properties:
+            street:
+              type: string
+              minLength: 3
+              maxLength: 200
+            postalCode:
+              type: string
+              pattern: ^75[0-9]{3}$
+            city:
+              default: Paris
+              type: string
+              minLength: 1
+            arrondissement:
+              type: integer
+              minimum: 1
+              maximum: 20
+          required:
+            - street
+            - postalCode
+            - arrondissement
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 30
+        bedrooms:
+          type: integer
+          minimum: 0
+          maximum: 20
+        surfaceM2:
+          type: integer
+          minimum: 5
+          maximum: 2000
+        amenities:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        nightlyRateHtCents:
+          type: integer
+          minimum: 100
+          maximum: 9007199254740991
+        vatRateBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        blockedRanges:
+          type: array
+          items:
+            type: object
+            properties:
+              start:
+                type: string
+                format: date-time
+              end:
+                type: string
+                format: date-time
+            required:
+              - start
+              - end
+        status:
+          type: string
+          enum:
+            - draft
+            - pending
+      required:
+        - title
+        - address
+        - capacity
+        - surfaceM2
+        - nightlyRateHtCents
+    PropertyPatch:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 140
+        description:
+          type: string
+          maxLength: 4000
+        address:
+          type: object
+          properties:
+            street:
+              type: string
+              minLength: 3
+              maxLength: 200
+            postalCode:
+              type: string
+              pattern: ^75[0-9]{3}$
+            city:
+              default: Paris
+              type: string
+              minLength: 1
+            arrondissement:
+              type: integer
+              minimum: 1
+              maximum: 20
+          required:
+            - street
+            - postalCode
+            - arrondissement
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 30
+        bedrooms:
+          type: integer
+          minimum: 0
+          maximum: 20
+        surfaceM2:
+          type: integer
+          minimum: 5
+          maximum: 2000
+        amenities:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        nightlyRateHtCents:
+          type: integer
+          minimum: 100
+          maximum: 9007199254740991
+        vatRateBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        blockedRanges:
+          type: array
+          items:
+            type: object
+            properties:
+              start:
+                type: string
+                format: date-time
+              end:
+                type: string
+                format: date-time
+            required:
+              - start
+              - end
+        status:
+          type: string
+          enum:
+            - draft
+            - pending
+    PropertyStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - draft
+            - pending
+            - published
+            - rejected
+        rejectionReason:
+          type: string
+          maxLength: 500
+      required:
+        - status
+    StayBookingRequest:
+      type: object
+      properties:
+        propertyId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+        startDate:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        endDate:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        guests:
+          default: 1
+          type: integer
+          minimum: 1
+          maximum: 30
+      required:
+        - propertyId
+        - startDate
+        - endDate
+    ServiceBookingRequest:
+      type: object
+      properties:
+        offeringId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+        qty:
+          default: 1
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 100000
+        scheduledAt:
+          type: string
+          format: date-time
+        stayBookingId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+        notes:
+          type: string
+          maxLength: 1000
+      required:
+        - offeringId
+        - scheduledAt
+    QuotePreviewRequest:
+      oneOf:
+        - type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - stay
+            stay:
+              type: object
+              properties:
+                propertyId:
+                  type: string
+                  pattern: ^[0-9a-f]{24}$
+                startDate:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+                endDate:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+                guests:
+                  default: 1
+                  type: integer
+                  minimum: 1
+                  maximum: 30
+              required:
+                - propertyId
+                - startDate
+                - endDate
+          required:
+            - kind
+            - stay
+        - type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - service
+            service:
+              type: object
+              properties:
+                offeringId:
+                  type: string
+                  pattern: ^[0-9a-f]{24}$
+                qty:
+                  default: 1
+                  type: number
+                  minimum: 0
+                  exclusiveMinimum: true
+                  maximum: 100000
+                scheduledAt:
+                  type: string
+                  format: date-time
+                stayBookingId:
+                  type: string
+                  pattern: ^[0-9a-f]{24}$
+                notes:
+                  type: string
+                  maxLength: 1000
+              required:
+                - offeringId
+                - scheduledAt
+          required:
+            - kind
+            - service
+    BookingStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - requested
+            - confirmed
+            - completed
+            - cancelled
+      required:
+        - status
+    CheckoutRequest:
+      type: object
+      properties:
+        tier:
+          type: string
+          enum:
+            - bagpacker
+            - explorator
+        interval:
+          type: string
+          enum:
+            - monthly
+            - yearly
+      required:
+        - tier
+        - interval
+    PaymentIntentRequest:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum:
+            - stay
+            - service
+        bookingId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+      required:
+        - kind
+        - bookingId
+    FileUpload:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum:
+            - property_photo
+            - booking_attachment
+            - inventory_report
+        ownerUserId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+        propertyId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+        bookingId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+      required:
+        - kind
+    ProviderPayoutPeriod:
+      type: object
+      properties:
+        year:
+          type: integer
+          minimum: 2018
+          maximum: 2100
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+      required:
+        - year
+        - month
+    PayoutStatus:
+      type: object
+      properties:
+        payoutStatus:
+          type: string
+          enum:
+            - pending
+            - sent
+      required:
+        - payoutStatus
+    InterventionReport:
+      type: object
+      properties:
+        performedAt:
+          type: string
+          format: date-time
+        durationMinutes:
+          type: integer
+          minimum: 1
+          maximum: 10080
+        workDone:
+          type: string
+          minLength: 3
+          maxLength: 4000
+        materialsUsed:
+          default: ""
+          type: string
+          maxLength: 2000
+        incidents:
+          default: ""
+          type: string
+          maxLength: 2000
+        attachmentIds:
+          default: []
+          maxItems: 10
+          type: array
+          items:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      required:
+        - performedAt
+        - durationMinutes
+        - workDone
+    ReviewSubmission:
+      type: object
+      properties:
+        bookingId:
+          type: string
+          pattern: ^[0-9a-f]{24}$
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          default: ""
+          type: string
+          maxLength: 2000
+      required:
+        - bookingId
+        - rating
+    ReviewModeration:
+      type: object
+      properties:
+        moderation:
+          type: string
+          enum:
+            - approved
+            - rejected
+            - pending
+        moderationReason:
+          nullable: true
+          type: string
+          maxLength: 500
+      required:
+        - moderation
+    Message:
+      type: object
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 4000
+      required:
+        - body
+    SimulationInput:
+      type: object
+      properties:
+        arrondissement:
+          type: integer
+          minimum: 1
+          maximum: 20
+        surfaceM2:
+          type: integer
+          minimum: 5
+          maximum: 2000
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 30
+        bedrooms:
+          default: 1
+          type: integer
+          minimum: 0
+          maximum: 20
+        nightlyRateHtCents:
+          type: integer
+          minimum: 1000
+          maximum: 10000000
+        occupancyRateBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        averageStayNights:
+          default: 3
+          type: integer
+          minimum: 1
+          maximum: 365
+        optionKeys:
+          default: []
+          maxItems: 20
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 60
+      required:
+        - arrondissement
+        - surfaceM2
+        - capacity
+        - nightlyRateHtCents
+        - occupancyRateBps
+      additionalProperties: false
+    LeadContact:
+      type: object
+      properties:
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        email:
+          type: string
+          format: email
+          pattern: ^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$
+        phone:
+          default: ""
+          type: string
+          maxLength: 20
+      required:
+        - firstName
+        - lastName
+        - email
+      additionalProperties: false
+    LeadQualification:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - new
+            - contacted
+            - converted
+            - archived
+        notes:
+          type: string
+          maxLength: 2000
+      additionalProperties: false
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: FORBIDDEN
+            message:
+              type: string
+              example: Cette réservation ne vous appartient pas
+            details:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+              description: "Présent uniquement sur VALIDATION_ERROR : champs fautifs et motifs."
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+        db:
+          type: string
+          enum:
+            - connected
+            - disconnected
+security: []
+paths:
+  /health:
+    get:
+      tags:
+        - Santé
+      summary: État de l’API et de la connexion MongoDB
+      security: []
+      responses:
+        "200":
+          description: Service disponible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /auth/register:
+    post:
+      tags:
+        - Authentification
+      summary: Créer un compte voyageur
+      description: "Le rôle est toujours « traveler » : il ne peut pas être choisi par le client. L’e-mail
+        est normalisé en minuscules."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Register"
+      responses:
+        "201":
+          description: Compte créé, jeton émis.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: object
+                  token:
+                    type: string
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/login:
+    post:
+      tags:
+        - Authentification
+      summary: Ouvrir une session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Login"
+      responses:
+        "200":
+          description: Session ouverte.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: object
+                  token:
+                    type: string
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /catalog/properties:
+    get:
+      tags:
+        - Catalogue public
+      summary: Lister les biens publiés
+      security: []
+      parameters:
+        - name: arrondissement
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+          description: Arrondissement parisien, de 1 à 20.
+        - name: capacity
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
+          description: Capacité minimale recherchée.
+      responses:
+        "200":
+          description: Biens au statut « published » uniquement.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  /catalog/properties/{id}:
+    get:
+      tags:
+        - Catalogue public
+      summary: Consulter un bien publié
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Fiche du bien.
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /catalog/properties/{id}/availability:
+    get:
+      tags:
+        - Catalogue public
+      summary: Périodes indisponibles d’un bien
+      description: Réunit les périodes bloquées par l’administration et les séjours demandés ou confirmés.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Intervalles { start, end }.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /catalog/categories:
+    get:
+      tags:
+        - Catalogue public
+      summary: Lister les catégories de prestations
+      security: []
+      responses:
+        "200":
+          description: Catégories.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  /catalog/offerings:
+    get:
+      tags:
+        - Catalogue public
+      summary: Lister les prestations actives
+      description: "Authentification facultative : un jeton change le résultat. Sans jeton, ou pour une
+        formule sans accès prioritaire, les prestations réservées aux Explorator sont masquées."
+      security: []
+      parameters:
+        - name: categoryId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+          description: Restreindre à une catégorie.
+      responses:
+        "200":
+          description: Prestations visibles par l’appelant.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "500":
+          description: PRICING_NOT_CONFIGURED ou VIP_PLAN_MISSING — lancer le seed de tarification.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /catalog/offerings/{id}:
+    get:
+      tags:
+        - Catalogue public
+      summary: Consulter une prestation
+      description: Authentification facultative. Une prestation réservée aux Explorator répond 403 pour
+        les autres.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Fiche de la prestation.
+          content:
+            application/json:
+              schema:
+                type: object
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /catalog/offerings/{id}/reviews:
+    get:
+      tags:
+        - Catalogue public
+      summary: Avis publiés sur une prestation
+      description: Seuls les avis approuvés par la modération sont renvoyés.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+        - name: providerId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+        - name: offeringId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Avis approuvés.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  /catalog/vip-plans:
+    get:
+      tags:
+        - Catalogue public
+      summary: Lister les formules VIP
+      security: []
+      responses:
+        "200":
+          description: Formules Free, Bag Packer et Explorator.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  /simulator/options:
+    get:
+      tags:
+        - Simulateur
+      summary: Options de conciergerie proposées par le simulateur
+      description: Lues depuis la configuration plateforme, jamais codées en dur.
+      security: []
+      responses:
+        "200":
+          description: Options souscriptibles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  /simulator/simulate:
+    post:
+      tags:
+        - Simulateur
+      summary: Estimer les gains d’un logement
+      description: Route publique limitée à 20 requêtes par minute et par adresse IP. Chaque simulation
+        est enregistrée comme demande qualifiable en back-office.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SimulationInput"
+      responses:
+        "201":
+          description: Ventilation détaillée et identifiant de la demande créée.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: RATE_LIMITED — trop de requêtes depuis cette adresse.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /simulator/leads/{id}/contact:
+    post:
+      tags:
+        - Simulateur
+      summary: Attacher des coordonnées à une simulation
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant renvoyé par la simulation.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeadContact"
+      responses:
+        "200":
+          description: Coordonnées enregistrées.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: RATE_LIMITED — trop de requêtes depuis cette adresse.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /files/{id}:
+    get:
+      tags:
+        - Fichiers
+      summary: Télécharger un document
+      description: Authentification facultative. Les photos de biens sont publiques ; les factures et
+        pièces jointes exigent d’en être le porteur, ou le rôle administrateur. Répond 304 sur
+        If-None-Match.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Flux du fichier, avec ETag et Cache-Control privé.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: Non modifié.
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags:
+        - Fichiers
+      summary: Supprimer un document
+      description: Réservé aux administrateurs. Suppression définitive dans GridFS.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "204":
+          description: Document supprimé.
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /stripe/webhook:
+    post:
+      tags:
+        - Webhooks Stripe
+      summary: Recevoir un événement Stripe
+      description: Seule source de vérité de l’état d’abonnement et du statut de paiement. Le corps brut
+        est requis pour la vérification de signature. Rejouer un même event.id ne produit aucune
+        seconde mutation.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Événement Stripe brut.
+      parameters:
+        - name: stripe-signature
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Événement accepté. « duplicate » indique un rejeu ignoré.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: STRIPE_NOT_CONFIGURED — aucune clé Stripe sur ce serveur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me:
+    get:
+      tags:
+        - Compte
+      summary: Profil de l’utilisateur connecté
+      description: L’empreinte du mot de passe n’est jamais renvoyée.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Profil, rôle et état VIP.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /quotes/preview:
+    post:
+      tags:
+        - Devis
+      summary: Estimer un séjour ou une prestation
+      description: Ne persiste rien et ne consomme aucun quota VIP. Partage exactement le code de calcul
+        utilisé à la création d’une réservation, donc le montant affiché est celui qui sera
+        enregistré.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuotePreviewRequest"
+      responses:
+        "200":
+          description: Instantané tarifaire complet.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /bookings:
+    get:
+      tags:
+        - Réservations
+      summary: Mes séjours et mes prestations
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Objet { stays, services }.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /bookings/stays:
+    post:
+      tags:
+        - Réservations
+      summary: Réserver un séjour
+      description: "L’instantané tarifaire est figé à la création : modifier ensuite un tarif ou un barème
+        ne change aucun montant."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StayBookingRequest"
+      responses:
+        "201":
+          description: Séjour créé, instantané tarifaire inclus.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /bookings/stays/{id}:
+    get:
+      tags:
+        - Réservations
+      summary: Consulter un séjour
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant du séjour.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Séjour.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /bookings/stays/{id}/cancel:
+    post:
+      tags:
+        - Réservations
+      summary: Annuler un séjour
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant du séjour.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Séjour annulé.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /bookings/services:
+    post:
+      tags:
+        - Réservations
+      summary: Réserver une prestation
+      description: Si la formule VIP ouvre droit à une prestation offerte et que la prestation est
+        éligible, le total est nul, le quota est consommé et la réservation est marquée payée sans
+        passer par Stripe.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceBookingRequest"
+      responses:
+        "201":
+          description: Prestation créée, instantané tarifaire inclus.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /bookings/services/{id}:
+    get:
+      tags:
+        - Réservations
+      summary: Consulter une prestation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de la réservation de prestation.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Prestation.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /bookings/services/{id}/cancel:
+    post:
+      tags:
+        - Réservations
+      summary: Annuler une prestation
+      description: Libère le quota VIP éventuellement consommé et retire la fiche d’intervention pré-remplie.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de la réservation de prestation.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Prestation annulée.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /payments/config:
+    get:
+      tags:
+        - Paiements
+      summary: Clé publiable Stripe
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Clé publiable à passer à Stripe.js.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: STRIPE_NOT_CONFIGURED — aucune clé Stripe sur ce serveur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /payments/intent:
+    post:
+      tags:
+        - Paiements
+      summary: Préparer le paiement d’une réservation
+      description: Le montant est repris de l’instantané tarifaire, jamais recalculé. Une clé
+        d’idempotence par réservation garantit qu’un double appel renvoie le même PaymentIntent. Le
+        passage en « payée » ne se fait que par webhook.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentIntentRequest"
+      responses:
+        "200":
+          description: Secret client, identifiant et montant.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: STRIPE_NOT_CONFIGURED — aucune clé Stripe sur ce serveur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /payments:
+    get:
+      tags:
+        - Paiements
+      summary: Mes règlements
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Règlements de l’utilisateur.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /invoices:
+    get:
+      tags:
+        - Factures
+      summary: Mes factures
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Factures voyageur.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /invoices/{id}:
+    get:
+      tags:
+        - Factures
+      summary: Consulter une facture
+      description: Le PDF archivé se télécharge séparément par GET /files/{gridFsId}.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de la facture.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Facture, lignes et totaux figés à l’émission.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /subscription/me:
+    get:
+      tags:
+        - Abonnement
+      summary: Mon abonnement et mon quota
+      description: La fenêtre de quota est ancrée sur la date de première souscription, pas sur le cycle
+        de facturation Stripe.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: État VIP, formule et fenêtre de quota.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /subscription/checkout:
+    post:
+      tags:
+        - Abonnement
+      summary: Ouvrir un paiement d’abonnement
+      description: L’activation de la formule n’a lieu qu’à réception du webhook, jamais au retour du
+        navigateur.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckoutRequest"
+      responses:
+        "200":
+          description: URL Stripe vers laquelle rediriger le navigateur.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: STRIPE_ERROR — Stripe n’a pas renvoyé d’URL.
+        "503":
+          description: STRIPE_NOT_CONFIGURED — aucune clé Stripe sur ce serveur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /subscription/portal:
+    post:
+      tags:
+        - Abonnement
+      summary: Ouvrir le portail client Stripe
+      description: Changement de formule et résiliation sont délégués au portail.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: URL Stripe vers laquelle rediriger le navigateur.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: STRIPE_NOT_CONFIGURED — aucune clé Stripe sur ce serveur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /reviews:
+    get:
+      tags:
+        - Avis
+      summary: Mes avis et leur statut de modération
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Avis déposés par l’utilisateur.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - Avis
+      summary: Évaluer une prestation réalisée
+      description: Ouvert aux trois formules, Free comprise. La prestation doit être terminée et
+        appartenir à l’auteur, et ne peut être évaluée qu’une fois.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewSubmission"
+      responses:
+        "201":
+          description: Avis enregistré, en attente de modération.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /threads:
+    get:
+      tags:
+        - Messagerie
+      summary: Mes fils de discussion
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Fils rattachés aux prestations de l’utilisateur.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /threads/{id}:
+    get:
+      tags:
+        - Messagerie
+      summary: Lire le fil d’une prestation
+      description: Le paramètre est l’identifiant de la réservation, pas celui du fil. La lecture remet
+        les non-lus à zéro.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de la réservation de prestation.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Objet { thread, messages } trié chronologiquement.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /threads/{id}/messages:
+    post:
+      tags:
+        - Messagerie
+      summary: Écrire dans le fil d’une prestation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de la réservation de prestation.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Message"
+      responses:
+        "201":
+          description: Message publié avec le rôle « traveler ».
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /interventions/{id}:
+    get:
+      tags:
+        - Fiches d’intervention
+      summary: Consulter la fiche d’une prestation
+      description: Le paramètre est l’identifiant de la réservation. Le voyageur n’y accède qu’une fois la
+        fiche complétée ; tant qu’elle est pré-remplie, l’API répond SHEET_NOT_AVAILABLE.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de la réservation de prestation.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Fiche en lecture seule.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/users:
+    get:
+      tags:
+        - Administration
+      summary: Lister les comptes
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Comptes voyageurs et administrateurs, sans empreinte de mot de passe.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/providers:
+    get:
+      tags:
+        - Administration
+      summary: Lister les prestataires
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Prestataires avec leur note cumulée.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - Administration
+      summary: Créer un prestataire
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Provider"
+      responses:
+        "201":
+          description: Prestataire créé.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/providers/{id}:
+    get:
+      tags:
+        - Administration
+      summary: Consulter un prestataire
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Prestataire.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      tags:
+        - Administration
+      summary: Modifier un prestataire
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderPatch"
+      responses:
+        "200":
+          description: Prestataire modifié.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags:
+        - Administration
+      summary: Supprimer un prestataire
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "204":
+          description: Supprimé.
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/categories:
+    get:
+      tags:
+        - Administration
+      summary: Lister les catégories
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Catégories de prestations.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - Administration
+      summary: Créer une catégorie
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceCategory"
+      responses:
+        "201":
+          description: Catégorie créée. Le slug doit être unique.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/categories/{id}:
+    patch:
+      tags:
+        - Administration
+      summary: Modifier une catégorie
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceCategoryPatch"
+      responses:
+        "200":
+          description: Catégorie modifiée.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags:
+        - Administration
+      summary: Supprimer une catégorie
+      description: Refusé si des prestations l’utilisent encore.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "204":
+          description: Supprimé.
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/offerings:
+    get:
+      tags:
+        - Administration
+      summary: Lister les prestations
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Toutes les prestations, actives ou non.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - Administration
+      summary: Créer une prestation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceOffering"
+      responses:
+        "201":
+          description: Prestation créée. Les paliers du barème doivent être strictement croissants et se
+            terminer par un palier ouvert.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/offerings/{id}:
+    get:
+      tags:
+        - Administration
+      summary: Consulter une prestation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Prestation.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      tags:
+        - Administration
+      summary: Modifier une prestation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceOfferingPatch"
+      responses:
+        "200":
+          description: Prestation modifiée. Sans effet sur les réservations passées.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags:
+        - Administration
+      summary: Supprimer une prestation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "204":
+          description: Supprimé.
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/properties:
+    get:
+      tags:
+        - Administration
+      summary: Lister les biens
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - draft
+              - pending
+              - published
+              - rejected
+      responses:
+        "200":
+          description: Biens, tous statuts confondus.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - Administration
+      summary: Créer un bien
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Property"
+      responses:
+        "201":
+          description: Bien créé, en attente de validation par défaut.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/properties/{id}:
+    get:
+      tags:
+        - Administration
+      summary: Consulter un bien
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Bien.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      tags:
+        - Administration
+      summary: Modifier un bien
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyPatch"
+      responses:
+        "200":
+          description: Bien modifié. Sans effet sur les séjours passés.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags:
+        - Administration
+      summary: Supprimer un bien
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "204":
+          description: Supprimé.
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/properties/{id}/status:
+    patch:
+      tags:
+        - Administration
+      summary: Modérer un bien
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyStatus"
+      responses:
+        "200":
+          description: Statut appliqué. Seul « published » rend le bien visible au public.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/properties/{id}/photos:
+    post:
+      tags:
+        - Administration
+      summary: Ajouter une photo à un bien
+      description: Stockée en GridFS avec metadata.kind « property_photo », puis rattachée au bien.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Image JPEG, PNG ou WebP, 10 Mo maximum.
+      responses:
+        "201":
+          description: Bien mis à jour avec la nouvelle photo.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: FILE_TOO_LARGE — au-delà de 10 Mo.
+  /admin/properties/{id}/photos/{fileId}:
+    delete:
+      tags:
+        - Administration
+      summary: Retirer une photo d’un bien
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+        - name: fileId
+          in: path
+          required: true
+          description: Identifiant GridFS de la photo.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Bien mis à jour.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/pricing/commission-tiers:
+    get:
+      tags:
+        - Administration
+      summary: Lire le barème de commission
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paliers de l’annexe 1, bornes inférieures incluses.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      tags:
+        - Administration
+      summary: Remplacer le barème de commission
+      description: "Sans effet rétroactif : les réservations et factures déjà émises conservent leur
+        instantané."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommissionTiers"
+      responses:
+        "200":
+          description: Barème enregistré.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/pricing/vip-plans:
+    get:
+      tags:
+        - Administration
+      summary: Lire les formules VIP
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Formules de l’annexe 2.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/pricing/vip-plans/{tier}:
+    patch:
+      tags:
+        - Administration
+      summary: Modifier une formule VIP
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tier
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - free
+              - bagpacker
+              - explorator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VipPlanPatch"
+      responses:
+        "200":
+          description: Formule modifiée.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/pricing/settings:
+    get:
+      tags:
+        - Administration
+      summary: Lire les paramètres plateforme
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Commission sur les nuitées, abonnement bailleur, options du simulateur.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      tags:
+        - Administration
+      summary: Modifier les paramètres plateforme
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformSettingsPatch"
+      responses:
+        "200":
+          description: Paramètres enregistrés.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/pricing/preview:
+    post:
+      tags:
+        - Administration
+      summary: Calculer un prix depuis un barème
+      description: "Aperçu pour l’éditeur de barème : applique le moteur tarifaire sans rien enregistrer."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricePreview"
+      responses:
+        "200":
+          description: Montant hors taxes en centimes.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/bookings/stays:
+    get:
+      tags:
+        - Administration
+      summary: Lister les séjours
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - requested
+              - confirmed
+              - completed
+              - cancelled
+      responses:
+        "200":
+          description: Séjours de tous les voyageurs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/bookings/stays/{id}/status:
+    patch:
+      tags:
+        - Administration
+      summary: Changer le statut d’un séjour
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BookingStatus"
+      responses:
+        "200":
+          description: Statut appliqué.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/bookings/services:
+    get:
+      tags:
+        - Administration
+      summary: Lister les prestations réservées
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - requested
+              - confirmed
+              - completed
+              - cancelled
+      responses:
+        "200":
+          description: Prestations de tous les voyageurs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/bookings/services/{id}/status:
+    patch:
+      tags:
+        - Administration
+      summary: Changer le statut d’une prestation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BookingStatus"
+      responses:
+        "200":
+          description: Statut appliqué. Passer à « confirmed » crée la fiche d’intervention pré-remplie ;
+            passer à « completed » exige une fiche complétée.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/subscriptions:
+    get:
+      tags:
+        - Administration
+      summary: Lister les abonnés
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: État VIP projeté depuis les webhooks Stripe, en lecture seule.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/payments:
+    get:
+      tags:
+        - Administration
+      summary: Lister les règlements
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Règlements et leur statut projeté depuis les webhooks.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/invoices:
+    get:
+      tags:
+        - Administration
+      summary: Lister les factures
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - traveler
+              - provider
+      responses:
+        "200":
+          description: Factures voyageur et prestataire.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/invoices/provider-payouts:
+    post:
+      tags:
+        - Administration
+      summary: Émettre les factures prestataires d’un mois
+      description: Agrège les prestations réalisées de la période par prestataire. Le net à payer est la
+        somme des montants figés dans les instantanés, jamais un recalcul. Relancer le même mois
+        n’émet pas de doublon.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderPayoutPeriod"
+      responses:
+        "201":
+          description: Objet { created, skipped }.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/invoices/{id}/payout:
+    patch:
+      tags:
+        - Administration
+      summary: Marquer le virement d’une facture prestataire
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PayoutStatus"
+      responses:
+        "200":
+          description: Statut de virement appliqué. Refusé sur une facture voyageur.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/interventions:
+    get:
+      tags:
+        - Administration
+      summary: Lister les fiches d’intervention
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - prefilled
+              - completed
+      responses:
+        "200":
+          description: Fiches pré-remplies et complétées.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/interventions/{id}/complete:
+    patch:
+      tags:
+        - Administration
+      summary: Compléter une fiche d’intervention
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de la fiche, pas de la réservation.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InterventionReport"
+      responses:
+        "200":
+          description: Fiche complétée. La prestation devient clôturable et la fiche visible par le voyageur.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/reviews:
+    get:
+      tags:
+        - Administration
+      summary: Lister les avis
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: moderation
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - pending
+              - approved
+              - rejected
+      responses:
+        "200":
+          description: Avis à modérer et déjà traités.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/reviews/{id}/moderation:
+    patch:
+      tags:
+        - Administration
+      summary: Modérer un avis
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewModeration"
+      responses:
+        "200":
+          description: Décision appliquée. La note du prestataire est recalculée sur les seuls avis approuvés.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/threads:
+    get:
+      tags:
+        - Administration
+      summary: Boîte de réception
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Fils de discussion avec leurs compteurs de non-lus.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/threads/{id}:
+    get:
+      tags:
+        - Administration
+      summary: Lire un fil
+      description: Le paramètre est l’identifiant de la réservation.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de la réservation de prestation.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      responses:
+        "200":
+          description: Objet { thread, messages }.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/threads/{id}/messages:
+    post:
+      tags:
+        - Administration
+      summary: Répondre au nom de la conciergerie
+      description: Le message porte le rôle « concierge », l’espace prestataire étant hors périmètre.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant de la réservation de prestation.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Message"
+      responses:
+        "201":
+          description: Message publié.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/leads:
+    get:
+      tags:
+        - Administration
+      summary: Lister les demandes de simulation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - new
+              - contacted
+              - converted
+              - archived
+        - name: withContact
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - "true"
+              - "false"
+      responses:
+        "200":
+          description: Demandes, avec ou sans coordonnées.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/leads/export.csv:
+    get:
+      tags:
+        - Administration
+      summary: Exporter les demandes en CSV
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Fichier CSV séparé par points-virgules.
+          content:
+            text/csv:
+              schema:
+                type: string
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/leads/{id}:
+    patch:
+      tags:
+        - Administration
+      summary: Qualifier une demande
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identifiant MongoDB sur 24 caractères hexadécimaux.
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{24}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeadQualification"
+      responses:
+        "200":
+          description: Demande mise à jour.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ressource introuvable. Le code précise laquelle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflit métier. Le code précise la règle enfreinte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /files:
+    post:
+      tags:
+        - Fichiers
+      summary: Téléverser un document
+      description: Réservé aux administrateurs. Le type MIME doit appartenir à la liste autorisée pour le
+        « kind » demandé.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+                - kind
+              properties:
+                file:
+                  type: string
+                  format: binary
+                kind:
+                  type: string
+                  enum:
+                    - property_photo
+                    - booking_attachment
+                    - inventory_report
+                ownerUserId:
+                  type: string
+                  pattern: ^[0-9a-f]{24}$
+                propertyId:
+                  type: string
+                  pattern: ^[0-9a-f]{24}$
+                bookingId:
+                  type: string
+                  pattern: ^[0-9a-f]{24}$
+      responses:
+        "201":
+          description: Document stocké en GridFS.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: VALIDATION_ERROR — corps ou paramètres refusés par le validateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: UNAUTHENTICATED — jeton absent, expiré, falsifié, ou compte disparu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: FORBIDDEN — rôle insuffisant ou ressource appartenant à un autre utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: FILE_TOO_LARGE — au-delà de 10 Mo.

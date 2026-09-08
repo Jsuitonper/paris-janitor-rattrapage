@@ -1,0 +1,284 @@
+/*
+ * Paris Janitor — jetons de design partagés
+ *
+ * Source unique pour les deux fronts. Aucun style de composant ici :
+ * uniquement des valeurs primitives et leurs alias sémantiques.
+ *
+ * Deux densités reposent sur la même base :
+ *   data-density="comfortable"  front voyageur, éditorial et aéré
+ *   data-density="compact"      back-office, dense et tabulaire
+ * Seuls les jetons dérivés changent d'une densité à l'autre.
+ *
+ * Les polices sont hébergées localement : la démonstration doit
+ * fonctionner sans réseau.
+ */
+
+/* --------------------------------------------------------------------
+ * Polices — Fraunces (variable 300–700, axe optique) et Inter
+ * (variable 400–600). Sous-ensembles latin et latin étendu seulement.
+ * ------------------------------------------------------------------ */
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('./fonts/fraunces-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('./fonts/fraunces-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('./fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('./fonts/inter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+:root {
+  color-scheme: light;
+
+  /* ------------------------------------------------------------------
+   * Couleurs primitives
+   * Un fond papier légèrement chaud, trois gris de texte, une seule
+   * couleur d'accent désaturée.
+   * ---------------------------------------------------------------- */
+
+  --pj-paper: #f7f5f1;
+  --pj-paper-sunken: #f1eee8;
+  --pj-surface: #fcfbf9;
+
+  --pj-ink: #1c1a17;
+  --pj-ink-muted: #6e6862;
+  --pj-ink-faint: #9c968d;
+  --pj-ink-inverse: #f9f7f4;
+
+  --pj-rule: #e2ded6;
+  --pj-rule-strong: #c8c2b7;
+
+  /* Accent terracotta, volontairement désaturé.
+   * Choisi plutôt qu'un vert profond pour laisser le vert entièrement
+   * disponible à la sémantique de succès, sans ambiguïté possible. */
+  --pj-accent: #9c5b43;
+  --pj-accent-hover: #834b36;
+  --pj-accent-soft: #f0e7e2;
+  --pj-accent-ink: #7a4432;
+
+  /* ------------------------------------------------------------------
+   * Couleurs d'état — sémantique uniquement, jamais décoratives.
+   * L'accent est désaturé là où l'alerte est saturée : les deux se
+   * distinguent même en niveaux de gris.
+   * ---------------------------------------------------------------- */
+
+  --pj-danger: #b0271b;
+  --pj-danger-soft: #f7e4e1;
+  --pj-danger-ink: #8c1f15;
+
+  --pj-success: #3d6b4a;
+  --pj-success-soft: #e5ede6;
+  --pj-success-ink: #2f5439;
+
+  /* Ambre désaturé, réservé aux états intermédiaires : avis en attente
+   * de modération, bien en brouillon, virement non effectué. Permet de
+   * balayer une colonne de statuts d'un regard. */
+  --pj-warning: #85631c;
+  --pj-warning-soft: #f3ebd9;
+  --pj-warning-ink: #6b4e14;
+
+  /* État inerte, sans charge sémantique : sans objet, archivé. */
+  --pj-neutral-soft: #ebe7e0;
+  --pj-neutral-ink: #5c574f;
+
+  /* ------------------------------------------------------------------
+   * Typographie
+   * La hiérarchie est portée par la taille, la graisse et l'espace.
+   * Jamais par la couleur.
+   * ---------------------------------------------------------------- */
+
+  --pj-font-display: 'Fraunces', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --pj-font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --pj-font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+
+  --pj-text-2xs: 0.6875rem; /* 11px — mentions, horodatages */
+  --pj-text-xs: 0.75rem; /* 12px — libellés de colonnes */
+  --pj-text-sm: 0.8125rem; /* 13px — texte secondaire */
+  --pj-text-base: 0.875rem; /* 14px — corps du back-office */
+  --pj-text-md: 0.9375rem; /* 15px — corps du front voyageur */
+  --pj-text-lg: 1.0625rem; /* 17px — chapô */
+  --pj-text-xl: 1.25rem; /* 20px */
+
+  --pj-display-xs: 1.375rem; /* 22px — titre de section */
+  --pj-display-sm: 1.75rem; /* 28px */
+  --pj-display-md: 2.25rem; /* 36px — titre de page */
+  --pj-display-lg: 3rem; /* 48px — titre éditorial */
+  --pj-display-xl: 3.75rem; /* 60px — accroche */
+
+  --pj-weight-regular: 400;
+  --pj-weight-medium: 500;
+  --pj-weight-semibold: 600;
+  --pj-display-weight: 400;
+  --pj-display-weight-strong: 500;
+
+  --pj-leading-tight: 1.08; /* grands titres sérif */
+  --pj-leading-snug: 1.3;
+  --pj-leading: 1.55; /* corps de texte */
+  --pj-leading-loose: 1.7;
+
+  --pj-tracking-tight: -0.02em; /* grands titres */
+  --pj-tracking-normal: 0;
+  --pj-tracking-wide: 0.06em; /* petites capitales de tableau */
+
+  --pj-measure: 66ch; /* largeur de lecture confortable */
+  --pj-measure-narrow: 48ch;
+
+  /* ------------------------------------------------------------------
+   * Espacement — échelle stricte, aucune valeur hors liste
+   * ---------------------------------------------------------------- */
+
+  --pj-space-1: 4px;
+  --pj-space-2: 8px;
+  --pj-space-3: 12px;
+  --pj-space-4: 16px;
+  --pj-space-5: 24px;
+  --pj-space-6: 32px;
+  --pj-space-7: 48px;
+
+  /* ------------------------------------------------------------------
+   * Rayons et filets
+   * Coins peu marqués, séparation par filets et par vide.
+   * Aucune ombre portée n'est définie : c'est délibéré.
+   * ---------------------------------------------------------------- */
+
+  --pj-radius-sm: 2px;
+  --pj-radius: 3px;
+  --pj-radius-lg: 4px;
+  --pj-radius-pill: 999px;
+
+  --pj-hairline: 1px solid var(--pj-rule);
+  --pj-hairline-strong: 1px solid var(--pj-rule-strong);
+
+  /* ------------------------------------------------------------------
+   * Focus et mouvement
+   * ---------------------------------------------------------------- */
+
+  --pj-focus-width: 2px;
+  --pj-focus-offset: 2px;
+  --pj-focus-color: var(--pj-accent);
+
+  --pj-transition-fast: 100ms ease;
+  --pj-transition: 160ms ease;
+
+  /* ------------------------------------------------------------------
+   * Enveloppes de page
+   * ---------------------------------------------------------------- */
+
+  --pj-page-max: 1120px;
+  --pj-page-max-narrow: 720px;
+  --pj-page-max-form: 400px;
+}
+
+/* --------------------------------------------------------------------
+ * Densité confortable — front voyageur
+ * Plus d'air, corps de texte plus grand, titres largement dégagés.
+ * ------------------------------------------------------------------ */
+
+[data-density='comfortable'] {
+  --pj-density-text: var(--pj-text-md);
+  --pj-density-page-x: var(--pj-space-6);
+  --pj-density-page-y: var(--pj-space-7);
+  --pj-density-section-gap: var(--pj-space-7);
+  --pj-density-block-gap: var(--pj-space-5);
+  --pj-density-heading-gap: var(--pj-space-5);
+  --pj-density-heading-lead: var(--pj-space-3);
+  --pj-density-field-y: var(--pj-space-3);
+  --pj-density-field-x: var(--pj-space-3);
+  --pj-density-field-gap: var(--pj-space-4);
+  --pj-density-row-y: var(--pj-space-4);
+  --pj-density-row-x: var(--pj-space-3);
+  --pj-density-control-y: var(--pj-space-3);
+  --pj-density-control-x: var(--pj-space-5);
+  --pj-density-page-title: var(--pj-display-md);
+  --pj-density-section-title: var(--pj-display-xs);
+  --pj-density-measure: var(--pj-measure);
+}
+
+/* --------------------------------------------------------------------
+ * Densité compacte — back-office
+ * Le corps reste à 14 px pour rester confortable à lire toute la
+ * journée : c'est l'espacement qui se resserre, pas la typographie.
+ * ------------------------------------------------------------------ */
+
+[data-density='compact'] {
+  --pj-density-text: var(--pj-text-base);
+  --pj-density-page-x: var(--pj-space-5);
+  --pj-density-page-y: var(--pj-space-5);
+  --pj-density-section-gap: var(--pj-space-6);
+  --pj-density-block-gap: var(--pj-space-4);
+  --pj-density-heading-gap: var(--pj-space-4);
+  --pj-density-heading-lead: var(--pj-space-2);
+  --pj-density-field-y: var(--pj-space-2);
+  --pj-density-field-x: var(--pj-space-2);
+  --pj-density-field-gap: var(--pj-space-3);
+  --pj-density-row-y: var(--pj-space-2);
+  --pj-density-row-x: var(--pj-space-2);
+  --pj-density-control-y: var(--pj-space-2);
+  --pj-density-control-x: var(--pj-space-3);
+  --pj-density-page-title: var(--pj-display-sm);
+  --pj-density-section-title: var(--pj-text-lg);
+  --pj-density-measure: var(--pj-measure);
+}
+
+/* --------------------------------------------------------------------
+ * Adaptation téléphone
+ * Les marges de page se resserrent, les grands titres redescendent
+ * d'un cran pour rester lisibles sous 420 px.
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 640px) {
+  [data-density='comfortable'],
+  [data-density='compact'] {
+    --pj-density-page-x: var(--pj-space-4);
+    --pj-density-page-y: var(--pj-space-5);
+    --pj-density-section-gap: var(--pj-space-6);
+    --pj-density-page-title: var(--pj-display-sm);
+  }
+
+  :root {
+    --pj-display-lg: 2.25rem;
+    --pj-display-xl: 2.75rem;
+  }
+}
+
+/* --------------------------------------------------------------------
+ * Respect des préférences système de mouvement
+ * ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --pj-transition-fast: 0ms;
+    --pj-transition: 0ms;
+  }
+}

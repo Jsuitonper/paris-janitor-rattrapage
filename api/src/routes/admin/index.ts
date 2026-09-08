@@ -1,0 +1,33 @@
+import { Router } from 'express';
+import { requireAuth } from '../../middlewares/requireAuth';
+import { requireRole } from '../../middlewares/requireRole';
+import { adminCategoriesRouter } from './categories.routes';
+import { adminOfferingsRouter } from './offerings.routes';
+import { adminPricingRouter } from './pricing.routes';
+import { adminPropertiesRouter } from './properties.routes';
+import { adminProvidersRouter } from './providers.routes';
+import { adminUsersRouter } from './users.routes';
+import { adminBookingsRouter } from './bookings.routes';
+import { adminInterventionsRouter, adminReviewsRouter, adminThreadsRouter } from './engagement.routes';
+import { adminInvoicesRouter } from './invoices.routes';
+import { adminLeadsRouter } from './leads.routes';
+import { adminPaymentsRouter } from './payments.routes';
+import { adminSubscriptionsRouter } from './subscriptions.routes';
+
+export const adminRouter = Router();
+
+adminRouter.use(requireAuth, requireRole('admin'));
+adminRouter.use('/users', adminUsersRouter);
+adminRouter.use('/providers', adminProvidersRouter);
+adminRouter.use('/categories', adminCategoriesRouter);
+adminRouter.use('/offerings', adminOfferingsRouter);
+adminRouter.use('/properties', adminPropertiesRouter);
+adminRouter.use('/pricing', adminPricingRouter);
+adminRouter.use('/bookings', adminBookingsRouter);
+adminRouter.use('/subscriptions', adminSubscriptionsRouter);
+adminRouter.use('/payments', adminPaymentsRouter);
+adminRouter.use('/invoices', adminInvoicesRouter);
+adminRouter.use('/interventions', adminInterventionsRouter);
+adminRouter.use('/reviews', adminReviewsRouter);
+adminRouter.use('/threads', adminThreadsRouter);
+adminRouter.use('/leads', adminLeadsRouter);

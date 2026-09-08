@@ -1,0 +1,36 @@
+import { Router } from 'express';
+import { adminRouter } from './admin';
+import { authRouter } from './auth.routes';
+import { bookingRouter } from './booking.routes';
+import { catalogRouter } from './catalog.routes';
+import { docsRouter } from './docs.routes';
+import { interventionRouter, reviewRouter, threadRouter } from './engagement.routes';
+import { simulatorRouter } from './simulator.routes';
+import { fileRouter } from './file.routes';
+import { invoiceRouter } from './invoice.routes';
+import { healthRouter } from './health.routes';
+import { paymentRouter } from './payment.routes';
+import { quoteRouter } from './quote.routes';
+import { stripeWebhookRouter } from './stripeWebhook.routes';
+import { subscriptionRouter } from './subscription.routes';
+import { userRouter } from './user.routes';
+
+export const apiRouter = Router();
+
+apiRouter.use('/docs', docsRouter);
+apiRouter.use('/health', healthRouter);
+apiRouter.use('/auth', authRouter);
+apiRouter.use(userRouter);
+apiRouter.use('/catalog', catalogRouter);
+apiRouter.use('/admin', adminRouter);
+apiRouter.use('/quotes', quoteRouter);
+apiRouter.use('/bookings', bookingRouter);
+apiRouter.use('/subscription', subscriptionRouter);
+apiRouter.use('/stripe', stripeWebhookRouter);
+apiRouter.use('/payments', paymentRouter);
+apiRouter.use('/files', fileRouter);
+apiRouter.use('/invoices', invoiceRouter);
+apiRouter.use('/reviews', reviewRouter);
+apiRouter.use('/threads', threadRouter);
+apiRouter.use('/interventions', interventionRouter);
+apiRouter.use('/simulator', simulatorRouter);

@@ -1,0 +1,39 @@
+# deps
+node_modules/
+.pnp/
+.pnp.js
+
+# builds
+dist/
+build/
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env.*.local
+!.env.example
+.env.production
+
+# logs
+*.log
+npm-debug.log*
+logs/
+
+# docker volumes
+mongo-data/
+
+# éditeurs / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# tests / coverage
+coverage/
+
+# uploads locaux
+api/uploads/
+# réglages locaux Claude Code (peuvent contenir des secrets)
+.claude/settings.local.json

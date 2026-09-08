@@ -1,0 +1,70 @@
+name: paris-janitor-prod
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: paris-janitor-mongo-prod
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?variable requise}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?variable requise}
+      MONGO_INITDB_DATABASE: ${MONGO_APP_DATABASE:-paris_janitor}
+      MONGO_APP_DATABASE: ${MONGO_APP_DATABASE:-paris_janitor}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:?variable requise}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?variable requise}
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo/init-app-user.js:/docker-entrypoint-initdb.d/init-app-user.js:ro
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand({ ping: 1 }).ok']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: paris-janitor-api
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      TRUST_PROXY: 1
+    ports:
+      - '${API_PORT:-3000}:3000'
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  web-traveler:
+    build:
+      context: .
+      dockerfile: web-traveler/Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: paris-janitor-web-traveler
+    restart: unless-stopped
+    ports:
+      - '${TRAVELER_PORT:-8080}:80'
+    depends_on:
+      - api
+
+  web-admin:
+    build:
+      context: .
+      dockerfile: web-admin/Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: paris-janitor-web-admin
+    restart: unless-stopped
+    ports:
+      - '${ADMIN_PORT:-8081}:80'
+    depends_on:
+      - api
+
+volumes:
+  mongo-data:

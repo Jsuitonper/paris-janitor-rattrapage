@@ -1,0 +1,21 @@
+{
+  "name": "paris-janitor",
+  "private": true,
+  "workspaces": [
+    "api",
+    "web-traveler",
+    "web-admin"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w api",
+    "dev:traveler": "npm run dev -w web-traveler",
+    "dev:admin": "npm run dev -w web-admin",
+    "test": "npm test -w api",
+    "lint": "npm run lint -w api",
+    "typecheck": "npm run typecheck --workspaces",
+    "build": "npm run build --workspaces",
+    "seed:admin": "npm run seed:admin -w api",
+    "seed:pricing": "npm run seed:pricing -w api",
+    "seed:demo": "npm run seed:demo -w api"
+  }
+}
