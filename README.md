@@ -173,6 +173,8 @@ Points de sécurité en place : `helmet`, CORS restreint aux domaines réels, en
 
 L'intégration continue (`.github/workflows/ci.yml`) enchaîne typecheck des trois workspaces, lint, tests, puis construction des trois images Docker.
 
+Deux procédures pas à pas complètent cette section : [docs/deploiement.md](docs/deploiement.md) pour un VPS Ubuntu 24.04 avec Docker Compose et Let's Encrypt, et [docs/deploiement-railway.md](docs/deploiement-railway.md) pour un déploiement Railway en quatre services managés.
+
 ## Architecture
 
 Le flux imposé est respecté partout : `route → controller → service → repository`.

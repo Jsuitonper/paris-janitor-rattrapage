@@ -11,6 +11,8 @@ ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build -w web-admin
 
 FROM nginx:1.27-alpine AS runtime
-COPY nginx/spa.conf /etc/nginx/conf.d/default.conf
+ARG NGINX_TEMPLATE=nginx/spa.conf.template
+COPY ${NGINX_TEMPLATE} /etc/nginx/templates/default.conf.template
 COPY --from=build /app/web-admin/dist /usr/share/nginx/html
+ENV PORT=80
 EXPOSE 80

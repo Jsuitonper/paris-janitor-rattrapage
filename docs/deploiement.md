@@ -604,7 +604,7 @@ Trois plafonds se cumulent, du plus extérieur au plus intérieur :
 | Niveau | Réglage | Valeur |
 |---|---|---|
 | Nginx hôte | `client_max_body_size` | 12 Mo, à poser vous-même, défaut 1 Mo |
-| Nginx du conteneur | `nginx/spa.conf` | 12 Mo, déjà configuré |
+| Nginx du conteneur | `nginx/spa.conf.template` | 12 Mo, déjà configuré |
 | Application | `MAX_FILE_BYTES` | 10 Mo |
 
 Un 413 avec un fichier de moins de 10 Mo vient presque toujours du Nginx de l'hôte, oublié à l'étape 9.
